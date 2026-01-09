@@ -15,6 +15,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
+from collections import OrderedDict
 import pwd
 import grp
 import fnmatch
@@ -209,6 +210,7 @@ class ObfuscatingFS(Operations):
         logger: logging.Logger,
         excludes: Iterable[str] = (),
         strict_paths: bool = False,
+        cache_size: int = 200,
     ) -> None:
         self.root = os.path.realpath(root)
         self.replacer = replacer
@@ -225,7 +227,8 @@ class ObfuscatingFS(Operations):
         self.excludes = [p.strip() for p in excludes if p.strip()]
         self.logger = logger
         self.open_files: Dict[int, FileState] = {}
-        self.cache: Dict[str, Dict[str, object]] = {}
+        self.cache: OrderedDict = OrderedDict()
+        self.cache_size = cache_size
         self._lock = threading.Lock()
         self._xattr_supported = all(
             hasattr(os, name)
@@ -337,18 +340,24 @@ class ObfuscatingFS(Operations):
 
     def _get_obfuscated_for_path(self, real_path: str, path: str) -> Tuple[bytes, bool]:
         st = os.stat(real_path)
-        cached = self.cache.get(real_path)
-        if cached and cached["mtime_ns"] == st.st_mtime_ns and cached["size"] == st.st_size:
-            return cached["data"], True  # type: ignore[return-value]
+        with self._lock:
+            cached = self.cache.get(real_path)
+            if cached and cached["mtime_ns"] == st.st_mtime_ns and cached["size"] == st.st_size:
+                self.cache.move_to_end(real_path)
+                return cached["data"], True  # type: ignore[return-value]
 
         data = self._read_real(real_path)
         obfuscated, is_text = self._obfuscate_bytes(data, path)
         if is_text:
-            self.cache[real_path] = {
-                "mtime_ns": st.st_mtime_ns,
-                "size": st.st_size,
-                "data": obfuscated,
-            }
+            with self._lock:
+                self.cache[real_path] = {
+                    "mtime_ns": st.st_mtime_ns,
+                    "size": st.st_size,
+                    "data": obfuscated,
+                }
+                self.cache.move_to_end(real_path)
+                while len(self.cache) > self.cache_size:
+                    self.cache.popitem(last=False)
         return obfuscated, is_text
 
     def _flush_text_state(self, state: FileState) -> None:
@@ -366,11 +375,15 @@ class ObfuscatingFS(Operations):
         os.fsync(state.fh)
 
         st = os.fstat(state.fh)
-        self.cache[state.full_path] = {
-            "mtime_ns": st.st_mtime_ns,
-            "size": st.st_size,
-            "data": bytes(state.obfuscated),
-        }
+        with self._lock:
+            self.cache[state.full_path] = {
+                "mtime_ns": st.st_mtime_ns,
+                "size": st.st_size,
+                "data": bytes(state.obfuscated),
+            }
+            self.cache.move_to_end(state.full_path)
+            while len(self.cache) > self.cache_size:
+                self.cache.popitem(last=False)
         self.logger.info(
             "Wrote text file: %s (obfuscated size=%d, real size=%d)",
             state.path,
@@ -398,7 +411,8 @@ class ObfuscatingFS(Operations):
         except OSError:
             return
 
-        self.cache.pop(real_path, None)
+        with self._lock:
+            self.cache.pop(real_path, None)
         self.logger.info("Deobfuscated renamed text file: %s", display_path)
 
     def access(self, path: str, mode: int) -> int:
@@ -656,11 +670,15 @@ class ObfuscatingFS(Operations):
                     f.truncate(0)
                     f.write(data_write)
                 st = os.stat(real_path)
-                self.cache[real_path] = {
-                    "mtime_ns": st.st_mtime_ns,
-                    "size": st.st_size,
-                    "data": bytes(buf),
-                }
+                with self._lock:
+                    self.cache[real_path] = {
+                        "mtime_ns": st.st_mtime_ns,
+                        "size": st.st_size,
+                        "data": bytes(buf),
+                    }
+                    self.cache.move_to_end(real_path)
+                    while len(self.cache) > self.cache_size:
+                        self.cache.popitem(last=False)
                 return 0
 
         return os.truncate(real_path, length)
@@ -888,6 +906,12 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Block access when a path contains non-obfuscated sensitive tokens",
     )
+    parser.add_argument(
+        "--cache-size",
+        type=int,
+        default=200,
+        help="Maximum number of files to cache in memory (LRU)",
+    )
     return parser.parse_args()
 
 
@@ -923,6 +947,7 @@ def main() -> int:
         logger,
         excludes=excludes,
         strict_paths=args.strict_paths,
+        cache_size=args.cache_size,
     )
 
     logger.info("Mounting obfuscating FS from %s to %s", source_dir, mount_dir)
