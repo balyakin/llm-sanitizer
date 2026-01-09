@@ -104,6 +104,8 @@ class ReplacementEngine:
         for original, placeholder in pairs:
             if not original or not placeholder:
                 raise ValueError("Replacement entries must be non-empty strings")
+            if os.sep in original:
+                raise ValueError("Original values must not contain path separators")
             if os.sep in placeholder:
                 raise ValueError("Placeholders must not contain path separators")
             if original in self.forward:
@@ -528,10 +530,22 @@ class ObfuscatingFS(Operations):
         return os.unlink(self._real_path(path))
 
     def symlink(self, target: str, name: str) -> int:
-        if self.strict_paths and self.replacer.contains_sensitive(target):
-            self._log_blocked_component(target)
-            raise FuseOSError(errno.ENOENT)
-        real_target = self.replacer.deobfuscate(target)
+        # Process target component-wise to respect boundaries and strict mode
+        parts = target.split(os.sep)
+        decoded_parts = []
+
+        for part in parts:
+            if not part:
+                decoded_parts.append(part)
+                continue
+
+            if self.strict_paths and self.replacer.contains_sensitive(part):
+                self._log_blocked_component(part)
+                raise FuseOSError(errno.ENOENT)
+
+            decoded_parts.append(self.replacer.deobfuscate(part))
+
+        real_target = os.sep.join(decoded_parts)
         real_name = self._real_path(name)
         os.symlink(real_target, real_name)
         self._maybe_chown_path(real_name, follow_symlinks=False)
