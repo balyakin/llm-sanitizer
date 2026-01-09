@@ -1,0 +1,16 @@
+{
+  "replacements": [
+    {
+      "original": "TopSecretProjectName",
+      "placeholder": "ProjectX"
+    },
+    {
+      "original": "api_key_123456789",
+      "placeholder": "API_KEY_PLACEHOLDER"
+    },
+    {
+      "original": "internal.server.com",
+      "placeholder": "example.com"
+    }
+  ]
+}

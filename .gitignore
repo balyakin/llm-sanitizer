@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Mac OS
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Project specific
+obf_mounts/
+sensitive_data.json
+.obfuscation_map.json
+
+# IDEs
+.idea/
+.vscode/
