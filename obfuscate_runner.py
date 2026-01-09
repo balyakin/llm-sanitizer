@@ -822,6 +822,8 @@ def _run_unmount(cmd: List[str], logger: logging.Logger, timeout: float) -> bool
 
 def _unmount(mount_dir: str, logger: logging.Logger) -> None:
     umount_cmds = [
+        ["fusermount", "-u", mount_dir],        # Linux standard
+        ["fusermount", "-u", "-z", mount_dir],  # Linux lazy
         ["/sbin/umount", mount_dir],
         ["/sbin/umount", "-f", mount_dir],
         ["diskutil", "unmount", mount_dir],

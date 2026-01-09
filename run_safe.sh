@@ -40,31 +40,75 @@ DICT_DIR="$(dirname "$DICT_PATH")"
 export OBFUSCATE_DICT="$DICT_PATH"
 export OBFUSCATE_UUID_MAP="${DICT_DIR}/.obfuscation_map.json"
 
-# FUSE configuration
-# Try to auto-detect macFUSE paths if not set
-if [[ -z "${OBFUSCATE_FUSE_LIB:-}" ]]; then
-    if [[ -f "/usr/local/lib/libfuse.dylib" ]]; then
-        export FUSE_LIBRARY_PATH="/usr/local/lib/libfuse.dylib"
-    elif [[ -f "/opt/homebrew/lib/libfuse.dylib" ]]; then
-        export FUSE_LIBRARY_PATH="/opt/homebrew/lib/libfuse.dylib"
+# --- OS Detection & FUSE Configuration ---
+
+OS_NAME="$(uname -s)"
+MOUNT_HELPER=""
+
+if [[ "$OS_NAME" == "Darwin" ]]; then
+    # macOS Configuration
+    if [[ -z "${OBFUSCATE_FUSE_LIB:-}" ]]; then
+        if [[ -f "/usr/local/lib/libfuse.dylib" ]]; then
+            export FUSE_LIBRARY_PATH="/usr/local/lib/libfuse.dylib"
+        elif [[ -f "/opt/homebrew/lib/libfuse.dylib" ]]; then
+            export FUSE_LIBRARY_PATH="/opt/homebrew/lib/libfuse.dylib"
+        else
+            export FUSE_LIBRARY_PATH="libfuse.dylib"
+        fi
     else
-        # Fallback, hope it's in library path
-        export FUSE_LIBRARY_PATH="libfuse.dylib"
+        export FUSE_LIBRARY_PATH="${OBFUSCATE_FUSE_LIB}"
     fi
+
+    if [[ -z "${OBFUSCATE_FUSE_DAEMON:-}" ]]; then
+         if [[ -f "/Library/Filesystems/macfuse.fs/Contents/Resources/mount_macfuse" ]]; then
+            MOUNT_HELPER="/Library/Filesystems/macfuse.fs/Contents/Resources/mount_macfuse"
+         else
+            MOUNT_HELPER="mount_macfuse"
+         fi
+    else
+        MOUNT_HELPER="${OBFUSCATE_FUSE_DAEMON}"
+    fi
+
+elif [[ "$OS_NAME" == "Linux" ]]; then
+    # Linux Configuration
+    if [[ -z "${OBFUSCATE_FUSE_LIB:-}" ]]; then
+        # Try common locations for libfuse.so
+        # fusepy typically needs libfuse.so.2 for broader compatibility, or just libfuse.so
+        FOUND_LIB=""
+        for cand in \
+            "/usr/lib/libfuse.so.2" \
+            "/usr/lib/x86_64-linux-gnu/libfuse.so.2" \
+            "/usr/lib/aarch64-linux-gnu/libfuse.so.2" \
+            "/lib/x86_64-linux-gnu/libfuse.so.2" \
+            "/usr/lib/libfuse.so" \
+            "/usr/local/lib/libfuse.so"
+        do
+            if [[ -f "$cand" ]]; then
+                FOUND_LIB="$cand"
+                break
+            fi
+        done
+        
+        if [[ -n "$FOUND_LIB" ]]; then
+            export FUSE_LIBRARY_PATH="$FOUND_LIB"
+        else
+            # Let ctypes find it by name
+            export FUSE_LIBRARY_PATH="libfuse.so.2"
+        fi
+    else
+        export FUSE_LIBRARY_PATH="${OBFUSCATE_FUSE_LIB}"
+    fi
+    
+    # Linux typically doesn't need a specific mount helper env var for fusepy
+    # unless using specific implementations, but we leave MOUNT_HELPER empty/default.
+    MOUNT_HELPER=""
 else
-    export FUSE_LIBRARY_PATH="${OBFUSCATE_FUSE_LIB}"
+    echo "Warning: Unsupported OS '$OS_NAME'. Attempting to run with defaults."
 fi
 
-if [[ -z "${OBFUSCATE_FUSE_DAEMON:-}" ]]; then
-     if [[ -f "/Library/Filesystems/macfuse.fs/Contents/Resources/mount_macfuse" ]]; then
-        MOUNT_HELPER="/Library/Filesystems/macfuse.fs/Contents/Resources/mount_macfuse"
-     else
-        MOUNT_HELPER="mount_macfuse"
-     fi
-else
-    MOUNT_HELPER="${OBFUSCATE_FUSE_DAEMON}"
+if [[ -n "$MOUNT_HELPER" ]]; then
+    export _FUSE_DAEMON_PATH="${MOUNT_HELPER}"
 fi
-export _FUSE_DAEMON_PATH="${MOUNT_HELPER}"
 
 # --- Git Obfuscation Wrapper ---
 
@@ -209,13 +253,19 @@ mkdir -p "$MOUNT_DIR"
 # Determine if we need sudo for mounting
 USE_SUDO="${OBFUSCATE_USE_SUDO:-}"
 if [[ -z "$USE_SUDO" ]]; then
-  # If mount_macfuse is executable by user without sudo, we might not need it.
-  # But typically macFUSE requires being in a specific group or root.
-  # Simple check: try to run mount_macfuse --version
-  if "$MOUNT_HELPER" --version >/dev/null 2>&1; then
-    USE_SUDO="0"
+  if [[ "$OS_NAME" == "Darwin" ]]; then
+      # On macOS with macFUSE, checking version is a proxy for check if we have access
+      if [[ -x "$MOUNT_HELPER" ]] && "$MOUNT_HELPER" --version >/dev/null 2>&1; then
+        USE_SUDO="0"
+      else
+        USE_SUDO="1"
+      fi
+  elif [[ "$OS_NAME" == "Linux" ]]; then
+      # On Linux, users in 'fuse' group usually don't need sudo.
+      # We assume no sudo by default for Linux to avoid prompt spam.
+      USE_SUDO="0"
   else
-    USE_SUDO="1"
+      USE_SUDO="0"
   fi
 fi
 

@@ -6,6 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![Platform macOS](https://img.shields.io/badge/platform-macOS-lightgrey.svg)]()
+[![Platform Linux](https://img.shields.io/badge/platform-Linux-lightgrey.svg)]()
 
 ## 🚀 What is this?
 
@@ -27,22 +28,36 @@ Your real files on disk remain untouched. The AI agent lives in a Matrix-like si
 
 ---
 
-## Requirements (macOS)
+## Requirements
+
+### macOS
 - macOS 12+ recommended
-- Python 3.9+
 - macFUSE (from macfuse project / Homebrew)
+
+### Linux
+- Kernel with FUSE support
+- `libfuse2` (usually installed by default or via `fuse` package)
+
+### Common
+- Python 3.9+
 - Python package `fusepy`
 
 ---
 
 ## Installation
 
-1) Install macFUSE
+1) Install FUSE
+
+**macOS:**
 ```bash
 brew install --cask macfuse
 ```
-After installation, macOS may ask you to allow the extension in
-System Settings -> Privacy & Security.
+(Allow the extension in System Settings -> Privacy & Security)
+
+**Linux (Debian/Ubuntu):**
+```bash
+sudo apt-get install fuse libfuse2
+```
 
 2) Install the project dependencies
 ```bash
@@ -167,17 +182,21 @@ Options:
 ## Troubleshooting
 
 ### Mount fails or unmount hangs
-- Ensure macFUSE is allowed by macOS.
-- Try reloading macFUSE after reboot:
-```bash
-sudo /Library/Filesystems/macfuse.fs/Contents/Resources/load_macfuse
-```
+- **macOS:** Ensure macFUSE is allowed by macOS. Try reloading: `sudo /Library/Filesystems/macfuse.fs/Contents/Resources/load_macfuse`
+- **Linux:** Ensure your user is in the `fuse` group if required: `sudo usermod -aG fuse $USER`
 
 ### Wrong libfuse path
-If Homebrew installed macFUSE under `/opt/homebrew`, the script tries to detect it. If it fails, set:
+The script tries to auto-detect `libfuse`. If it fails:
+
+**macOS:**
 ```bash
 export OBFUSCATE_FUSE_LIB=/opt/homebrew/lib/libfuse.dylib
 export OBFUSCATE_FUSE_DAEMON=/Library/Filesystems/macfuse.fs/Contents/Resources/mount_macfuse
+```
+
+**Linux:**
+```bash
+export OBFUSCATE_FUSE_LIB=/usr/lib/x86_64-linux-gnu/libfuse.so.2
 ```
 
 ---
